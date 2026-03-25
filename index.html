@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
-  <title>Night Shift Tracker | PH Time | Dynamic Break & Finish</title>
+  <title>Night Shift Tracker | PH Time | Clean Break Display</title>
   <style>
     * {
       box-sizing: border-box;
@@ -252,19 +252,17 @@
     <h1>🌙 Night Shift Tracker <span class="ph-badge">🇵🇭 PH Time</span></h1>
   </div>
   <div class="sub">
-    ⏱️ 7h 30min work target · Break = (time to 6AM) − 7h30m · Shift summary fixed 9PM → 6AM
+    ⏱️ 7h 30min work target · Break = (time to 6AM) – remaining work · No decimals – whole minutes only
   </div>
 
   <!-- INPUT SECTION -->
   <div class="input-group">
     <div class="input-row">
       <div class="input-field">
-        <label>🕒 LOGIN TIME (Philippine Time)</label>
+        <label>🕒 LOGIN TIME (start of shift)</label>
         <input type="time" id="startTimeInput" value="21:00" step="60">
-        <div class="time-preview" style="margin-top: 6px;">⏰ Must be ≤ 9:00 PM (21:00)</div>
+        <div class="time-preview" style="margin-top: 6px;">⏰ Usually 9:00 PM</div>
       </div>
-    </div>
-    <div class="input-row" style="margin-top: 1rem;">
       <div class="input-field">
         <label>✅ WORK LOGGED (already worked)</label>
         <div class="dual-input">
@@ -273,17 +271,6 @@
           </div>
           <div class="input-field">
             <input type="number" id="workedMinutes" value="0" min="0" max="59" step="15" placeholder="Mins">
-          </div>
-        </div>
-      </div>
-      <div class="input-field">
-        <label>🍽️ BREAK USED (already taken)</label>
-        <div class="dual-input">
-          <div class="input-field">
-            <input type="number" id="breakHours" value="0" min="0" max="5" step="1" placeholder="Hours">
-          </div>
-          <div class="input-field">
-            <input type="number" id="breakMinutes" value="0" min="0" max="59" step="15" placeholder="Mins">
           </div>
         </div>
       </div>
@@ -300,14 +287,14 @@
       <span class="stat-value" id="remainingWorkDisplay">0h 0m</span>
     </div>
     <div class="stat-block">
-      <span class="stat-label">🧘‍♂️ BREAK REMAINING (until 6AM)</span>
-      <span class="stat-value" id="remainingBreakDisplay">1h 30m</span>
-      <span class="stat-sub" id="breakSubNote">(allowance based on login)</span>
+      <span class="stat-label">🧘‍♂️ BREAK REMAINING (can still take)</span>
+      <span class="stat-value" id="remainingBreakDisplay">0h 0m</span>
+      <span class="stat-sub" id="breakSubNote"></span>
     </div>
     <div class="stat-block">
       <span class="stat-label">⏳ FINISH TIME</span>
       <span class="stat-value highlight" id="finishTimeDisplay">--:-- --</span>
-      <span class="stat-sub" id="finishInfo">earliest 6:00 AM</span>
+      <span class="stat-sub" id="finishInfo"></span>
     </div>
     <div class="stat-block">
       <span class="stat-label">🎯 SHIFT SUMMARY (reference)</span>
@@ -325,23 +312,20 @@
     <div id="warningMessage" class="warning" style="margin-top: 8px; display: none;"></div>
   </div>
   <div class="footer-note">
-    🔄 Break allowance = (time from login to 6AM) − 7h30m.  
-    Break remaining = allowance − break used. If you use more break than allowance, finish time moves beyond 6AM.<br>
+    🔄 Break remaining = (minutes from <strong>now</strong> to 6AM) – remaining work.  
+    All times are in whole minutes for clarity. Updates every second with current PH time.<br>
     <span id="liveClock" style="display: inline-block; margin-top: 6px; font-size: 0.7rem;"></span>
   </div>
 </div>
 
 <script>
   (function() {
-    // CONSTANTS
     const TOTAL_WORK_MINUTES = 7 * 60 + 30;   // 450 minutes
 
     // DOM Elements
     const startTimeInput = document.getElementById('startTimeInput');
     const workedHoursInput = document.getElementById('workedHours');
     const workedMinutesInput = document.getElementById('workedMinutes');
-    const breakHoursInput = document.getElementById('breakHours');
-    const breakMinutesInput = document.getElementById('breakMinutes');
     const refreshBtn = document.getElementById('refreshBtn');
 
     const remainingWorkDisplay = document.getElementById('remainingWorkDisplay');
@@ -352,32 +336,55 @@
     const breakSubNote = document.getElementById('breakSubNote');
     const finishInfoSpan = document.getElementById('finishInfo');
 
-    // Helper: format minutes to "Xh Ym"
+    // Helper: format minutes to "Xh Ym" – ensures whole minutes (no decimals)
     function formatMinutesToHM(minutes) {
-      if (minutes < 0) minutes = 0;
-      const hrs = Math.floor(minutes / 60);
-      const mins = minutes % 60;
+      // Round down to nearest whole minute
+      let wholeMinutes = Math.floor(minutes);
+      if (wholeMinutes < 0) {
+        const abs = -wholeMinutes;
+        const hrs = Math.floor(abs / 60);
+        const mins = abs % 60;
+        return `-${hrs}h ${mins}m`;
+      }
+      const hrs = Math.floor(wholeMinutes / 60);
+      const mins = wholeMinutes % 60;
       return `${hrs}h ${mins}m`;
     }
 
-    // Helper: parse time string "HH:MM"
-    function parseTimeString(timeStr) {
-      const [hour, minute] = timeStr.split(':').map(Number);
-      return { hour, minute };
-    }
-
-    // Get a Date object representing today in Manila time (midnight)
-    function getCurrentManilaDate() {
+    // Get current time in Philippine time (as a Date object)
+    function getCurrentManilaTime() {
       const now = new Date();
-      const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' });
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
       const parts = formatter.formatToParts(now);
-      let year, month, day;
+      let year, month, day, hour, minute, second;
       for (const part of parts) {
         if (part.type === 'year') year = part.value;
         if (part.type === 'month') month = part.value;
         if (part.type === 'day') day = part.value;
+        if (part.type === 'hour') hour = part.value;
+        if (part.type === 'minute') minute = part.value;
+        if (part.type === 'second') second = part.value;
       }
-      return new Date(`${year}-${month}-${day}T00:00:00`);
+      return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+    }
+
+    // Get the next 6:00 AM in Manila time (the target finish)
+    function getNext6AM(currentDate) {
+      let target = new Date(currentDate);
+      target.setHours(6, 0, 0, 0);
+      if (currentDate >= target) {
+        target.setDate(target.getDate() + 1);
+      }
+      return target;
     }
 
     // Format date to Philippine time (hh:mm AM/PM)
@@ -390,61 +397,47 @@
       }).format(date);
     }
 
-    // Core computation
-    function computeTracker(startTimeStr, workedMinutesLogged, breakMinutesUsed) {
-      // 1. Cap worked minutes to total work (can't exceed target)
+    // Core computation – returns whole minutes for break & time to 6AM
+    function computeTracker(startTimeStr, workedMinutesLogged, currentTime) {
+      // Cap worked minutes to total work
       let validWorked = Math.min(workedMinutesLogged, TOTAL_WORK_MINUTES);
       let workCapWarning = workedMinutesLogged > TOTAL_WORK_MINUTES;
       const remainingWork = TOTAL_WORK_MINUTES - validWorked;
 
-      // 2. Get login as a Date object (same day in Manila)
-      const { hour: startHour, minute: startMinute } = parseTimeString(startTimeStr);
-      const baseDate = getCurrentManilaDate();
-      let loginDate = new Date(baseDate);
-      loginDate.setHours(startHour, startMinute, 0, 0);
+      // Minutes from current time to next 6 AM (whole minutes, floor)
+      const next6AM = getNext6AM(currentTime);
+      let minutesTo6AM = (next6AM - currentTime) / (1000 * 60);
+      minutesTo6AM = Math.floor(minutesTo6AM);  // whole minutes only
 
-      // 3. Target logout = 6:00 AM of the next day
-      let targetLogout = new Date(baseDate);
-      targetLogout.setDate(targetLogout.getDate() + 1);
-      targetLogout.setHours(6, 0, 0, 0);
-
-      // 4. Total minutes from login to 6AM
-      const minutesTo6AM = (targetLogout - loginDate) / (1000 * 60);
-
-      // 5. Break allowance = total time to 6AM - required work
-      let breakAllowance = minutesTo6AM - TOTAL_WORK_MINUTES;
-      if (breakAllowance < 0) breakAllowance = 0;   // safety, but login should be ≤9pm
-
-      // 6. Break remaining and overbreak
-      let breakRemaining = Math.max(0, breakAllowance - breakMinutesUsed);
-      let overbreak = Math.max(0, breakMinutesUsed - breakAllowance);
-
-      // 7. Finish time: if overbreak, add extra minutes after 6AM
+      // Break remaining = time to 6AM - remaining work
+      let breakRemaining = minutesTo6AM - remainingWork;
       let finishTime;
-      if (overbreak === 0) {
-        finishTime = new Date(targetLogout);
+      let overrun = 0;
+
+      if (breakRemaining >= 0) {
+        // Enough time: finish exactly at 6 AM
+        finishTime = new Date(next6AM);
       } else {
-        finishTime = new Date(targetLogout.getTime() + overbreak * 60 * 1000);
+        // Not enough: finish after 6 AM
+        overrun = -breakRemaining;   // positive minutes after 6 AM
+        finishTime = new Date(next6AM.getTime() + overrun * 60 * 1000);
+        breakRemaining = 0;
       }
 
       return {
         remainingWorkMinutes: remainingWork,
-        breakAllowance: breakAllowance,
-        breakRemaining: breakRemaining,
-        overbreak: overbreak,
+        breakRemainingMinutes: breakRemaining,
+        minutesTo6AM: minutesTo6AM,
         finishDate: finishTime,
-        workCapWarning: workCapWarning,
-        breakUsed: breakMinutesUsed,
-        validWorked: validWorked
+        overrunMinutes: overrun,
+        workCapWarning: workCapWarning
       };
     }
 
     function updateTracker() {
-      // Get start time
-      let startTime = startTimeInput.value;
-      if (!startTime) startTime = "21:00";
-
-      // Get worked minutes
+      const currentTime = getCurrentManilaTime();
+      const startTime = startTimeInput.value || "21:00";
+      
       let workedHrs = parseInt(workedHoursInput.value, 10);
       let workedMins = parseInt(workedMinutesInput.value, 10);
       if (isNaN(workedHrs)) workedHrs = 0;
@@ -453,39 +446,37 @@
       workedHrs = Math.min(12, Math.max(0, workedHrs));
       const totalWorkedMinutes = (workedHrs * 60) + workedMins;
 
-      // Get break used minutes
-      let breakHrs = parseInt(breakHoursInput.value, 10);
-      let breakMins = parseInt(breakMinutesInput.value, 10);
-      if (isNaN(breakHrs)) breakHrs = 0;
-      if (isNaN(breakMins)) breakMins = 0;
-      breakMins = Math.min(59, Math.max(0, breakMins));
-      breakHrs = Math.min(10, Math.max(0, breakHrs));
-      const totalBreakMinutes = (breakHrs * 60) + breakMins;
+      const result = computeTracker(startTime, totalWorkedMinutes, currentTime);
 
-      const result = computeTracker(startTime, totalWorkedMinutes, totalBreakMinutes);
-
-      // Update displays
+      // Update work remaining
       remainingWorkDisplay.innerText = formatMinutesToHM(result.remainingWorkMinutes);
-      remainingBreakDisplay.innerText = formatMinutesToHM(result.breakRemaining);
-      breakSubNote.innerHTML = `(allowance: ${formatMinutesToHM(result.breakAllowance)})`;
+      
+      // Update break remaining and sub‑note
+      remainingBreakDisplay.innerText = formatMinutesToHM(result.breakRemainingMinutes);
+      if (result.overrunMinutes > 0) {
+        breakSubNote.innerHTML = `(time to 6AM: ${formatMinutesToHM(result.minutesTo6AM)} – need ${formatMinutesToHM(result.remainingWorkMinutes)} work → overrun)`;
+      } else {
+        breakSubNote.innerHTML = `(time to 6AM: ${formatMinutesToHM(result.minutesTo6AM)} – ${formatMinutesToHM(result.remainingWorkMinutes)} work left)`;
+      }
 
+      // Finish time
       finishTimeDisplay.innerText = formatToPhilippineTime(result.finishDate);
 
       // Fixed shift summary (9pm → 6am)
-      const fixedStart = new Date(getCurrentManilaDate());
+      const fixedStart = new Date(currentTime);
       fixedStart.setHours(21, 0, 0, 0);
       const fixedEnd = new Date(fixedStart);
       fixedEnd.setDate(fixedEnd.getDate() + 1);
       fixedEnd.setHours(6, 0, 0, 0);
       shiftSummarySpan.innerText = `${formatToPhilippineTime(fixedStart)} → ${formatToPhilippineTime(fixedEnd)}`;
 
-      // Warning logic
+      // Warnings and info
       let warningMsg = '';
       if (result.workCapWarning) {
-        warningMsg += `⚠️ Logged work (${formatMinutesToHM(totalWorkedMinutes)}) exceeds target 7h30m. Work capped at full target. `;
+        warningMsg += `⚠️ Logged work (${formatMinutesToHM(totalWorkedMinutes)}) exceeds target 7h30m. Work capped. `;
       }
-      if (result.overbreak > 0) {
-        warningMsg += `⏰ You've taken ${formatMinutesToHM(result.overbreak)} extra break. Finish time is after 6AM.`;
+      if (result.overrunMinutes > 0) {
+        warningMsg += `⏰ Not enough time left until 6AM. You'll finish at ${formatToPhilippineTime(result.finishDate)}.`;
       }
       if (warningMsg) {
         warningDiv.style.display = 'block';
@@ -494,20 +485,18 @@
         warningDiv.style.display = 'none';
       }
 
-      // Finish info text
-      if (result.overbreak > 0) {
-        finishInfoSpan.innerText = `🚀 extended due to overbreak`;
-      } else if (result.breakRemaining === 0 && result.breakAllowance > 0) {
-        finishInfoSpan.innerText = `✅ all break used, finish at 6AM`;
-      } else if (result.breakRemaining > 0) {
-        finishInfoSpan.innerText = `🧘 you have break left → finish at 6AM`;
+      if (result.overrunMinutes > 0) {
+        finishInfoSpan.innerText = `after 6AM due to insufficient time`;
+      } else if (result.breakRemainingMinutes > 0) {
+        finishInfoSpan.innerText = `you can finish at 6AM with ${formatMinutesToHM(result.breakRemainingMinutes)} break`;
+      } else if (result.breakRemainingMinutes === 0 && result.remainingWorkMinutes === 0) {
+        finishInfoSpan.innerText = `all done, finish at 6AM`;
       } else {
-        finishInfoSpan.innerText = `earliest 6:00 AM`;
+        finishInfoSpan.innerText = `you need to work beyond 6AM`;
       }
     }
 
     function sanitizeAndUpdate() {
-      // Work inputs
       let workHrs = parseInt(workedHoursInput.value, 10);
       let workMins = parseInt(workedMinutesInput.value, 10);
       if (isNaN(workHrs)) workHrs = 0;
@@ -516,29 +505,16 @@
       workMins = Math.min(59, Math.max(0, workMins));
       workedHoursInput.value = workHrs;
       workedMinutesInput.value = workMins;
-
-      // Break inputs
-      let breakHrs = parseInt(breakHoursInput.value, 10);
-      let breakMins = parseInt(breakMinutesInput.value, 10);
-      if (isNaN(breakHrs)) breakHrs = 0;
-      if (isNaN(breakMins)) breakMins = 0;
-      breakHrs = Math.min(10, Math.max(0, breakHrs));
-      breakMins = Math.min(59, Math.max(0, breakMins));
-      breakHoursInput.value = breakHrs;
-      breakMinutesInput.value = breakMins;
-
       updateTracker();
     }
 
-    // Event listeners
+    // Events
     refreshBtn.addEventListener('click', sanitizeAndUpdate);
     workedHoursInput.addEventListener('input', sanitizeAndUpdate);
     workedMinutesInput.addEventListener('input', sanitizeAndUpdate);
-    breakHoursInput.addEventListener('input', sanitizeAndUpdate);
-    breakMinutesInput.addEventListener('input', sanitizeAndUpdate);
     startTimeInput.addEventListener('change', sanitizeAndUpdate);
 
-    // Live clock in Philippine time
+    // Live clock with auto‑update every second
     const liveClockSpan = document.getElementById('liveClock');
     if (liveClockSpan) {
       setInterval(() => {
@@ -551,10 +527,11 @@
           hour12: true
         }).format(nowPH);
         liveClockSpan.innerHTML = `🕒 Philippine current time: ${phTime}`;
+        updateTracker();  // keep everything in sync with the current second
       }, 1000);
     }
 
-    // Initial update
+    // Initial run
     sanitizeAndUpdate();
   })();
 </script>
